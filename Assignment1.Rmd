@@ -1,0 +1,449 @@
+---
+title: "Assignment 1"
+subtitle: "ECON 818"
+author: 
+  - Derek Situ
+  - Farshad Behzadi
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load packages
+pacman::p_load(tidyverse, tidyquant, forecast, tfplot, pracma, kableExtra)
+```
+
+# Exercise 1
+
+## E1 Q1
+
+Microsoft is a technology company that has been around for a long time. It was founded in 1975 by Bill Gates and Paul Allen. The company has grown to become one of the largest technology companies in the world. Microsoft is known for its software products, such as Windows and Office, as well as its hardware products, such as the Xbox gaming console. The company has a market capitalization of over $1 trillion and is one of the most valuable companies in the world.
+
+We have chosen to analyze Microsoft because the company has a long history of success and has been able to adapt to changes in the technology industry. Microsoft has a strong brand and a loyal customer base, which has helped it to maintain its position as one of the leading technology companies in the world.
+
+## E1 Q2
+
+```{r}
+# Load Microsoft stock data
+msft <- tq_get("MSFT", 
+               get = "stock.prices", 
+               from = "2023-09-10", 
+               to = "2024-09-09")
+
+# Plot MSFT adjusted closing price over time
+# I do not like plotting the ts object since it does not take into account
+#   weekends and holidays, thus the dates would be wrong.
+msft %>%
+  ggplot(aes(x = date, y = adjusted)) +
+  geom_line() +
+  labs(title = "Microsoft (MSFT) Adjusted Closing Price",
+       x = "Date",
+       y = "Adjusted Closing Price")
+```
+
+The series seems to steadily increase over time with some fluctuations so that we do not have $E(y_t) = \mu \ \forall t$ and the joint distribution of the series depends on time and not just lag/lead. Thus the series seems to be neither strictly nor weakly stationary.
+
+## E1 Q3a
+
+Given that the series is increasing steadily over time, the average method will not produce good results. The naive method will be decent if the forecast horizon is short since $y_{t+h}$ is similar to $y_t$ for small $h$. I would normally expect the random walk with drift to be best since it takes into account the trend in the series.
+
+## E1 Q3b
+
+```{r}
+# Create MSFT ts object
+# Not going to bother with dates since ts objects do not take into account
+#  weekends and holidays. Thus the dates associated with the ts object are wrong
+msft_ts <- ts(msft$adjusted, start = 1, end = 250)
+
+# Create MSFT training and testing sets
+msft_train <- window(msft_ts, start = 1, end = 200)
+msft_test <- window(msft_ts, start = 201, end = 250)
+
+# Start and end dates of training and testing sets
+start_train <- msft$date[1]
+end_train <- msft$date[200]
+start_test <- msft$date[201]
+end_test <- msft$date[250]
+```
+
+The start and end dates of the training and testing sets are as follows:
+
+- Start date of training set: `r start_train`
+- End date of training set: `r end_train`
+- Start date of testing set: `r start_test`
+- End date of testing set: `r end_test`
+
+```{r}
+# Forecast using average method, naive method, and random walk with drift
+msft_average <- meanf(msft_train, h = 50)
+msft_naive <- naive(msft_train, h = 50)
+msft_drift <- rwf(msft_train, h = 50, drift = TRUE)
+
+# Function to plot forecast depending on method
+plot_forecast <- function(method) {
+  plot(get(paste("msft_", method, sep = "")),
+       main = paste("MSFT forecast using", method, "method", sep = " "),
+       xlab = "Day",
+       ylab = "Adjusted closing price")
+  lines(msft_ts)
+  legend("topleft", 
+         legend = c("Actual", "Forecast"), 
+         col = c("black", "blue"), 
+         lty = 1)
+}
+
+# Plot forecasts
+par(mfrow = c(3, 1), mar = c(4, 5, 1, 5))
+plot_forecast("average")
+plot_forecast("naive")
+plot_forecast("drift")
+
+# Compute performance measures
+accuracy(msft_average, msft_test)
+accuracy(msft_naive, msft_test)
+accuracy(msft_drift, msft_test)
+```
+
+Based on the performance measures, the naive method actually performs best as it has the lowest value for each of the measures of error. The reason why the random walk with drift method performed worse than the naive method is because the testing set happened to have a very different trend than the training set. If future data has a similar trend to the training set and the forecast horizon is long, then the random walk with drift method would likely perform better.
+
+```{r}
+checkresiduals(msft_naive)
+```
+
+From the plot of the residuals we see that it could possibly resemble white noise centred around 0. To get a clearer idea of whether the residuals are correlated, we look at the ACF plot. We can see that the ACF is not statistically significant from 0 at all lags, which suggests that the residuals are uncorrelated. From the density plot of the residuals, we see that the residuals are approximately normally distributed and centred approximately at 0. From the Ljung-Box test, the high p-value suggests we cannot reject the null that the first 10 autocorrelations are different than 0. All of this suggests that the residuals seem to be white noise. 
+
+## E1 Q3c
+
+```{r}
+# Create MSFT forecast for next 5 days and get actual next 5 values
+msft_forecast <- naive(msft_ts, h = 5)
+msft_next_5 <- tq_get("MSFT", 
+                      get = "stock.prices", 
+                      from = "2024-09-09", 
+                      to = "2024-09-16")
+
+# Add actual next 5 values to msft dataframe
+msft_actual <- bind_rows(msft, msft_next_5)
+
+# Create ts object for actual values
+msft_actual_ts <- ts(msft_actual$adjusted[201:255], start = 201, end = 255)
+
+# Plot actual values and forecast
+autoplot(msft_actual_ts) + 
+  autolayer(msft_forecast, 
+            series = "Naive") +
+  labs(title = "MSFT Actual vs Forecast",
+       x = "Day",
+       y = "Adjusted closing price") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+The naive method performed best on the testing set. However, comparing the 5-day forecast with the actual next 5 values, we see that the 95% prediction interval does not even contain most of the actual values. This is because the stock experienced a rather large increase in price which was not captured by the naive method. The random walk with drift would have performed better in this case as the predicted values would have included an upward trend which was apparent in the first 200 days.
+
+## E1 Q3d
+
+```{r}
+# Initialize vectors to store forecasts
+mean_forecasts <- c()
+naive_forecasts <- c()
+drift_forecasts <- c()
+
+# Initialize vectors to store prediction intervals
+mean_lowers <- c()
+mean_uppers <- c()
+naive_lowers <- c()
+naive_uppers <- c()
+drift_lowers <- c()
+drift_uppers <- c()
+
+# MAE storage for each method
+mean_abserr <- c()
+naive_abserr <- c()
+naive_residuals <- c() # store residuals for preferred method to check later
+drift_abserr <- c()
+
+# Initialize training sets
+msft_train_mean <- msft_train
+msft_train_naive <- msft_train
+msft_train_drift <- msft_train
+
+for (i in 1:length(msft_test)) {
+  # Mean method forecast
+  mean_forecast <- meanf(msft_train_mean, h = 1)$mean
+  mean_forecasts <- c(mean_forecasts, mean_forecast)
+  mean_lowers <- c(mean_lowers, meanf(msft_train_mean, h = 1)$lower[2])
+  mean_uppers <- c(mean_uppers, meanf(msft_train_mean, h = 1)$upper[2])
+  mean_abserr <- c(mean_abserr, abs(msft_test[i] - mean_forecast))
+  # Expand training set for mean method
+  msft_train_mean <- c(msft_train_mean, mean_forecast)
+  
+  # Naive method forecast
+  naive_forecast <- naive(msft_train_naive, h = 1)$mean
+  naive_forecasts <- c(naive_forecasts, naive_forecast)
+  naive_lowers <- c(naive_lowers, naive(msft_train_naive, h = 1)$lower[2])
+  naive_uppers <- c(naive_uppers, naive(msft_train_naive, h = 1)$upper[2])
+  naive_abserr <- c(naive_abserr, abs(msft_test[i] - naive_forecast))
+  naive_residuals <- c(naive_residuals, msft_test[i] - naive_forecast)
+  # Expand training set for naive method
+  msft_train_naive <- c(msft_train_naive, naive_forecast)
+  
+  # Drift method forecast
+  drift_forecast <- rwf(msft_train_drift, drift = TRUE, h = 1)$mean
+  drift_forecasts <- c(drift_forecasts, drift_forecast)
+  drift_lowers <- c(drift_lowers, 
+                    rwf(msft_train_drift, drift = TRUE, h = 1)$lower[2])
+  drift_uppers <- c(drift_uppers, 
+                    rwf(msft_train_drift, drift = TRUE, h = 1)$upper[2])
+  drift_abserr <- c(drift_abserr, abs(msft_test[i] - drift_forecast))
+  # Expand training set for drift method
+  msft_train_drift <- c(msft_train_drift, drift_forecast)
+}
+
+# Plot MSFT vs. forecasts
+autoplot(msft_ts) + 
+  autolayer(ts(mean_forecasts, start = 201, end = 255), 
+            series = "Mean") +
+  autolayer(ts(naive_forecasts, start = 201, end = 255), 
+            series = "Naive") +
+  autolayer(ts(drift_forecasts, start = 201, end = 255), 
+            series = "Drift") +
+  autolayer(ts(mean_lowers, start = 201, end = 255), 
+            series = "Mean Lower", 
+            alpha = 0.3, 
+            linetype = "dashed") +
+  autolayer(ts(mean_uppers, start = 201, end = 255), 
+            series = "Mean Upper", 
+            alpha = 0.3, 
+            linetype = "dashed") +
+  autolayer(ts(naive_lowers, start = 201, end = 255), 
+            series = "Naive Lower", 
+            alpha = 0.3, 
+            linetype = "dashed") +
+  autolayer(ts(naive_uppers, start = 201, end = 255), 
+            series = "Naive Upper", 
+            alpha = 0.3, 
+            linetype = "dashed") +
+  autolayer(ts(drift_lowers, start = 201, end = 255), 
+            series = "Drift Lower", 
+            alpha = 0.3, 
+            linetype = "dashed") +
+  autolayer(ts(drift_uppers, start = 201, end = 255), 
+            series = "Drift Upper", 
+            alpha = 0.3, 
+            linetype = "dashed") +
+  labs(title = "MSFT Actual vs Forecasts",
+       x = "Day",
+       y = "Adjusted closing price") +
+  guides(colour = guide_legend(title = "Forecast"))
+
+# Calculate mean absolute errors
+mean(mean_abserr) # Mean method MAE
+mean(naive_abserr) # Naive method MAE
+mean(drift_abserr) # Drift method MAE
+
+# Plot naive_residuals
+par(mfrow = c(2, 2))
+plot(ts(naive_residuals, start = 201, end = 250), 
+     main = "Naive Method Residuals",
+     xlab = "Day",
+     ylab = "Residual")
+
+# Plot naive_residuals ACF
+Acf(naive_residuals)
+
+# Histogram of naive_residuals
+hist(naive_residuals, 
+     main = "Naive Method Residuals",
+     xlab = "Residual",
+     ylab = "Frequency")
+
+# Box-Ljung test for naive_residuals
+Box.test(naive_residuals, lag = 20, type = "Ljung-Box")
+```
+
+The naive method has the best (lowest) MAE again with a rolling window forecast. The plot of the naive method residuals show a downward trend, indicating that the bias of the estimate is increasing over time. Thus the residuals do not represent white noise. The ACF of the residuals decays slowly, indicating that the naive method is not capturing all of the information in the data. The histogram shows that the naive residuals has a multimodal distribution, again showing that the estimates are biased. The Box-Ljung test shows that we reject the null that the residuals are uncorrelated at the 5% significance level.
+
+# Exercise 2
+
+## E2 Q1a
+
+```{r}
+# Compute returns and log returns series
+msft_rt <- tfplot::percentChange(msft_ts) / 100
+msft_log_rt <- diff(log(msft_ts))
+
+# Plot regular series, returns series, and log returns series
+par(mfrow = c(3, 1), mar = c(4, 5, 1, 5))
+plot(msft_ts, 
+     main = "MSFT Adjusted Closing Price", 
+     xlab = "Day", 
+     ylab = "Adjusted closing price")
+plot(msft_rt, 
+     main = "MSFT Returns", 
+     xlab = "Day", 
+     ylab = "Return")
+plot(msft_log_rt, 
+     main = "MSFT Log Returns", 
+     xlab = "Day", 
+     ylab = "Log Return")
+```
+
+## E2 Q1b
+
+The returns and log returns series appear stationary as they do not exhibit any clear trend. We would have to check the ACFs to get a clearer idea of whether there is seasonality that could cause $E(y_t) \neq E(y_{t + k})$ for some $k$, but based on these plots it looks like the series are stationary, unlike the regular series which has a trend and does not seem stationary.
+
+## E2 Q1c
+
+The returns series and log returns series are very similar. Since they appear stationary, we can apply the many time series models and forecasting methods that assume stationarity. Non-stationarity is a problem in time series forecasting because the models often rely on the assumption that the underlying process is not changing. An economic reason for using the returns series is that it is often advantageous to interpret percentage changes in prices rather than absolute changes. The log returns is very similar and we use logs a lot in economics and interpret their changes as percent changes.
+
+## E2 Q2a
+
+```{r}
+# Auto-ARIMA model for log returns series
+msft_log_rt_train <- c(NA, window(msft_log_rt, start = 2, end = 200))
+msft_log_rt_arima <- auto.arima(msft_log_rt_train)
+
+# Coefficients of model
+msft_log_rt_arima$coef
+
+# Plot root of characteristic polynomial on complex plane
+autoplot(msft_log_rt_arima)
+
+# Characteristic polynomial
+z <- msft_log_rt_arima$model$Z # z = 1
+phi <- msft_log_rt_arima$model$phi
+polynomial <- c(z, -phi) # z - phi = 0
+
+# Root of characteristic polynomial
+root <- roots(polynomial)
+root
+```
+
+The ARIMA model for the log returns series is ARIMA(1, 0, 0) or AR(1). The model equation is 
+$$
+y_t = `r round(msft_log_rt_arima[["coef"]][["intercept"]], 3)` + (`r round(msft_log_rt_arima[["coef"]][["ar1"]], 3)`) y_{t-1} + \epsilon_t .
+$$
+From the graph and the computation of the root of the characteristic polynomial, we see that the root `r round(root, 3)` has a modulus strictly less than 1 on the complex plane. 
+
+## E2 Q2b
+
+```{r}
+# Compute 1 day ahead forecast
+msft_log_rt_forecast <- forecast(msft_log_rt_arima, h = 1)
+
+par(mfrow=c(1,1))
+plot(msft_log_rt_forecast, 
+     main = "MSFT Log Returns Forecast", 
+     xlab = "Day", 
+     ylab = "Log Return")
+
+msft_log_rt_forecast$mean # 1 day ahead forecast
+msft_log_rt_forecast$lower # confidence band lower bound
+msft_log_rt_forecast$upper # confidence band upper bound
+```
+
+## E2 Q2c
+
+```{r}
+# Undo the log transformation to get the forecast for the adjusted closing price
+#   z_t = log(y_t / y_{t-1})
+#   exp(z_t) * y_{t-1} = y_t
+msft_unlogged <- exp(msft_log_rt_forecast$mean) * msft_ts[200]
+
+# Confidence band lower bound
+msft_unlogged_lower <- msft_unlogged - 1.96 *
+  msft_log_rt_forecast$model$sigma2/sqrt(200)
+msft_unlogged_lower
+
+# Confidence band upper bound
+msft_unlogged_upper <- msft_unlogged + 1.96 *
+  msft_log_rt_forecast$model$sigma2/sqrt(200)
+msft_unlogged_upper
+```
+
+## E2 Q2d
+
+```{r}
+# Compute residual
+msft_unlogged_res <- msft_unlogged - msft_ts[201]
+msft_unlogged_res
+```
+
+## E2 Q2e
+
+```{r}
+# Predicted observation 202
+msft_log_rt_forecast_2 <- forecast(msft_log_rt_arima, h = 2)$mean[2]
+msft_unlogged_2 <- exp(msft_log_rt_forecast_2) * msft_unlogged
+msft_unlogged_2
+
+# Confidence band lower bound for observation 202
+msft_unlogged_lower_2 <- msft_unlogged_2 - 1.96 *
+  msft_log_rt_forecast$model$sigma2/sqrt(200)
+msft_unlogged_lower_2
+
+# Confidence band upper bound
+msft_unlogged_upper_2 <- msft_unlogged_2 + 1.96 *
+  msft_log_rt_forecast$model$sigma2/sqrt(200)
+msft_unlogged_upper_2
+
+# Compute residual
+msft_unlogged_res_2 <- msft_unlogged_2 - msft_ts[202]
+msft_unlogged_res_2
+```
+
+## E2 Q2f
+
+```{r}
+# Get logged returns forecast for next 50 days
+msft_log_rt_fc_all <- forecast(msft_log_rt_arima, h = 50)
+msft_log_rt_fc_all$mean
+
+# Calculate unlogged forecast for next 50 days
+msft_unlogged_all <-
+  exp(msft_log_rt_fc_all$mean) * c(msft_train[200], msft_test[-50])
+msft_unlogged_all
+
+# Calculate residuals for next 50 days
+msft_unlogged_res_all <- msft_unlogged_all - msft_ts[201:250]
+msft_unlogged_res_all
+```
+
+## E2 Q2g
+
+```{r}
+# Accuracy measures from E1Q3d
+accuracy(msft_average, msft_test)
+accuracy(msft_naive, msft_test)
+accuracy(msft_drift, msft_test)
+
+# Accuracy measures from ARIMA model
+
+# Mean Absolute Error
+msft_unlogged_mae <- mean(abs(msft_unlogged_res))
+
+# Root Mean Squared Error
+msft_unlogged_rmse <- sqrt(mean(msft_unlogged_res^2))
+
+# Mean Absolute Percentage Error
+msft_unlogged_mape <- mean(abs(100 * msft_unlogged_res_all / msft_ts[201:250]))
+
+# Symmetric Mean Absolute Percentage Error
+msft_unlogged_smape <- mean(200 * abs(msft_ts[201:250] - msft_unlogged_all) / 
+                              (msft_ts[201:250] + msft_unlogged_all))
+
+data.frame(msft_unlogged_mae = msft_unlogged_mae,
+           msft_unlogged_rmse = msft_unlogged_rmse,
+           msft_unlogged_mape = msft_unlogged_mape,
+           msft_unlogged_smape = msft_unlogged_smape)
+```
+
+The ARIMA model performs better on all measures of accuracy, thus I would recommend the ARIMA model.
+
+```{r}
+# Write all data pulled from Yahoo!Finance to CSV
+write.csv(msft_actual, "msft.csv")
+```
+
